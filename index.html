@@ -37,40 +37,75 @@ summary{cursor:pointer}
 .empty{color:var(--mut);font:15px system-ui,sans-serif;margin-top:26px}
 footer{color:var(--mut);font:13px/1.45 system-ui,sans-serif;margin-top:34px;border-top:1px solid var(--line);padding-top:14px}
 footer a{color:var(--acc)}
+.bar{display:none;margin:0 0 14px;font:600 14px system-ui,sans-serif}
+.framed .bar{display:block}
+.framed main{padding-top:14px}
+.bar a{display:inline-block;padding:9px 14px;border:1px solid var(--acc);border-radius:6px;color:var(--acc);text-decoration:none}
+input#g{flex:1 1 200px;min-width:0;padding:10px 12px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg);font:14px system-ui,sans-serif}
+.more p{border-top:1px solid var(--line);padding-top:8px}
+.more .meta{margin:0 0 4px}
+.next{font:14px/1.5 system-ui,sans-serif;margin:22px 0 0;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:var(--card)}
+.next a{color:var(--acc);font-weight:600}
 </style>
 </head>
 <body>
 <main>
+<p class="bar"><a id="full" href="./" target="_top">Open Ask Grimerica full screen</a></p>
 <h1>Ask Grimerica</h1>
 <p class="sub" id="stats">Search what was said on the show.</p>
 <form id="f">
-<input type="text" id="q" placeholder='Try: Younger Dryas impact, or "UFO quote of the week"' autocomplete="off">
+<input type="text" id="q" placeholder='Try: Younger Dryas impact, or "UFO quote of the week"' autocomplete="off" aria-label="Search words">
+<input type="text" id="g" list="gl" placeholder="Guest or episode title (optional)" autocomplete="off" aria-label="Guest or episode title">
+<datalist id="gl"></datalist>
 <input type="number" id="y1" placeholder="from year" min="2013" max="2100" aria-label="From year">
 <input type="number" id="y2" placeholder="to year" min="2013" max="2100" aria-label="To year">
 <select id="o" aria-label="Order"><option value="best">Best match</option><option value="oldest">Oldest first</option><option value="newest">Newest first</option></select>
 <button id="b">Search</button>
 </form>
-<p class="note">Put a phrase in "quotation marks" to match it exactly. The text comes from YouTube auto-captions, so names are often misspelled: try a second spelling. Each link opens the episode at that moment.</p>
+<p class="note">Put a phrase in "quotation marks" to match it exactly. The text comes from YouTube auto-captions, which misspell names; the common ones (Younger Dryas, Grimerica, Baalbek and others) are matched under their garbled spellings too. Each link opens the episode at that moment.</p>
 <div id="out"></div>
-<footer>Search only: this page finds passages, it does not write answers. Public episodes of <a href="https://grimerica.ca">The Grimerica Show</a>. Guests speak for themselves; a passage here is what someone said, not a statement of fact.</footer>
+<footer>Search only: this page finds passages, it does not write answers. Public episodes of <a href="https://grimerica.ca">The Grimerica Show</a>. Guests speak for themselves; a passage here is what someone said, not a statement of fact.<span id="logNote"></span></footer>
 </main>
 <script src="sqljs-httpvfs.js"></script>
 <script>
 (function(){
+/* ---- settings you can change ---- */
+const NEXT_LINKS=[['Support the show','https://grimerica.ca'],['Join the Grimoire Skool','https://www.skool.com/audiobooks']];
+const LOG_URL='';            // address of the search-count service; leave empty to switch counting off
+const EPISODES=20, MORE_PER_EPISODE=5, POOL=180, OR_BELOW=8;
+/* Caption misspellings: searching any of `keys` also searches every spelling in `any`. */
+const ALIASES=[
+ {keys:['younger dryas','dryas'],any:['dryas','"younger dus"','"younger driest"','"younger dras"','"younger dest"','"younger dry"','"younger drives"','"younger dryest"','"younger dryus"','"younger dasas"','"younger dries"']},
+ {keys:['grimerica'],any:['grimerica','gramerica','grandamerica','"gr america"','"grand america"','"g america"','"grim america"','"grime america"','"grab america"','"grow america"','"grey america"','"gri america"']},
+ {keys:['gobekli tepe','gobekli'],any:['gobekli','gobecletepe','"go beckley"']},
+ {keys:['puma punku','pumapunku'],any:['pumapunku','"puma punku"']},
+ {keys:['baalbek','baalbeck','balbek'],any:['baalbek','baalbeck','balbeck','balbec']},
+ {keys:['anunnaki','anunaki','annunaki'],any:['anunnaki','anunaki','annunaki']},
+ {keys:['velikovsky'],any:['velikovsky','velikovski']},
+ {keys:['schoch'],any:['schoch','"robert shock"']},
+ {keys:['hancock'],any:['hancock','hanok','hanock']},
+ {keys:['carlson'],any:['carlson','"randall carson"']}
+];
 const STOP=new Set("a about after all also am an and any are as at be because been but by can could did do does doing for from had has have he her here him his how i if in into is it its just like me more my no not now of on one only or our out over said say says she so some than that the their them then there these they this to too up us was we were what when where which who why will with would you your talk talked talking episode episodes show guest tell told ever".split(" "));
-const LIMIT=30, PER_EPISODE=3, POOL=180;
+const NAME_SKIP=/\b(Grimerica|Talks?|Round|Outlawed|Episode|Part|Show|Live|Trailer|Teaser|Bonus|Hours?|Full|New|The|And|With|Plus)\b/;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const mark=s=>esc(s).replace(/\u0001/g,'<mark>').replace(/\u0002/g,'</mark>');
 const hms=t=>{t=Math.floor(t);const h=Math.floor(t/3600),m=Math.floor(t%3600/60),s=t%60;return h?h+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0'):m+':'+String(s).padStart(2,'0')};
-let dbp=null, runId=0;
+let dbp=null, runId=0, EPS={};
 
+if(window.self!==window.top){document.body.classList.add('framed');$('full').href=location.href.split('#')[0];}
+
+/* Opens the database and warms it up straight away, so the first search does not pay for it. */
 function db(){
   if(!dbp){
     dbp=(async()=>{
       const c=await (await fetch('config.json',{cache:'no-cache'})).json();
       const cfg=Object.assign({},c.config,{urlPrefix:new URL(c.config.urlPrefix,location.href).href});
       const w=await createDbWorker([{from:'inline',config:cfg}],new URL('sqlite.worker.js',location.href).href,new URL('sql-wasm.wasm',location.href).href);
+      const eps=await w.db.query('SELECT doc,title,date,episode,url FROM episodes');
+      eps.forEach(e=>EPS[e.doc]=e);
+      w.db.query("SELECT rowid FROM passages_fts WHERE passages_fts MATCH '\"grimerica\"' LIMIT 1").catch(()=>{});
       return {w,meta:c.meta};
     })();
     dbp.catch(()=>{dbp=null});
@@ -79,22 +114,39 @@ function db(){
 }
 
 function buildQueries(q){
-  const phrases=[],words=[];const re=/"([^"]+)"|([A-Za-z0-9'#]+)/g;let m;
-  while((m=re.exec(q))){
-    if(m[1]){const p=m[1].replace(/[^A-Za-z0-9' ]/g,' ').trim();if(p)phrases.push('"'+p+'"');}
-    else{const w=m[2].replace(/[^A-Za-z0-9]/g,'');if(w&&!STOP.has(w.toLowerCase()))words.push('"'+w+'"');}
+  const terms=[];
+  let rest=' '+q.toLowerCase().replace(/[\u2018\u2019]/g,"'").replace(/[\u201c\u201d]/g,'"').replace(/\u00f6/g,'o')+' ';
+  for(const a of ALIASES){
+    for(const k of a.keys){
+      const re=new RegExp('\\s"?'+k.replace(/ /g,'\\s+')+'"?(?=\\s)');
+      if(re.test(rest)){rest=rest.replace(re,' ');if(!a.used){a.used=1;terms.push('('+a.any.join(' OR ')+')');}}
+    }
+    a.used=0;
   }
-  const terms=phrases.concat(words);
+  const re=/"([^"]+)"|([a-z0-9'#]+)/g;let m;
+  while((m=re.exec(rest))){
+    if(m[1]){const p=m[1].replace(/[^a-z0-9' ]/g,' ').trim();if(p)terms.push('"'+p+'"');}
+    else{const w=m[2].replace(/[^a-z0-9]/g,'');if(w&&!STOP.has(w))terms.push('"'+w+'"');}
+  }
   if(!terms.length)return null;
   return [terms.join(' AND '),terms.join(' OR ')];
 }
 
-async function search(q,order,y1,y2){
-  const qs=buildQueries(q);if(!qs)return [];
+function docsFor(g){
+  g=g.trim().toLowerCase();if(!g)return null;
+  const words=g.split(/\s+/);
+  return Object.values(EPS).filter(e=>{const t=(e.title||'').toLowerCase();return words.every(w=>t.includes(w));}).map(e=>e.doc);
+}
+
+/* Returns {groups:[{ep, rows:[{id,start,all}]}], passages:n} with the best passage of each episode first. */
+async function search(q,order,y1,y2,g){
+  const qs=buildQueries(q);if(!qs)return {groups:[],passages:0};
   const {w}=await db();
   const conds=[],args=[];
   if(y1){conds.push('e.date >= ?');args.push(String(y1).padStart(4,'0')+'-01-01');}
   if(y2){conds.push('e.date <= ?');args.push(String(y2).padStart(4,'0')+'-12-31');}
+  const docs=docsFor(g||'');
+  if(docs){if(!docs.length)return {groups:[],passages:0};conds.push('p.doc IN ('+docs.join(',')+')');}
   const where=conds.length?' AND '+conds.join(' AND '):'';
   const ord={best:'s',oldest:'e.date, p.start',newest:'e.date DESC, p.start'}[order]||'s';
   const sql='SELECT passages_fts.rowid AS id, bm25(passages_fts) AS s, p.doc AS doc, p.start AS start FROM passages_fts JOIN passages p ON p.id=passages_fts.rowid JOIN episodes e ON e.doc=p.doc WHERE passages_fts MATCH ?'+where+' ORDER BY '+ord+' LIMIT '+POOL;
@@ -102,17 +154,22 @@ async function search(q,order,y1,y2){
   for(const fts of (qs[0]===qs[1]?[qs[0]]:qs)){
     let got=[];try{got=await w.db.query(sql,[fts].concat(args));}catch(e){continue;}
     for(const r of got){if(!seen.has(r.id)){seen.add(r.id);r.all=(fts===qs[0]);rows.push(r);}}
-    if(rows.length>=LIMIT*2)break;
+    if(rows.length>=OR_BELOW)break;            // only widen to "any word" when "all words" found very little
   }
-  const out=[],held=[],per={};
-  for(const r of rows){if((per[r.doc]||0)<PER_EPISODE){per[r.doc]=(per[r.doc]||0)+1;out.push(r);}else held.push(r);}
-  const top=out.concat(held).slice(0,LIMIT);
-  if(!top.length)return [];
-  const ids=top.map(r=>r.id).join(','),docs=[...new Set(top.map(r=>r.doc))].join(',');
-  const hl=await w.db.query('SELECT rowid AS id, highlight(passages_fts,0,char(1),char(2)) AS t FROM passages_fts WHERE passages_fts MATCH ? AND rowid IN ('+ids+')',[qs[1]]);
-  const eps=await w.db.query('SELECT doc,title,date,episode,url FROM episodes WHERE doc IN ('+docs+')');
-  const T={},E={};hl.forEach(x=>T[x.id]=x.t);eps.forEach(x=>E[x.doc]=x);
-  return top.map(r=>Object.assign({text:T[r.id]||''},E[r.doc],r));
+  const by={},groups=[];
+  for(const r of rows){if(!by[r.doc]){by[r.doc]={ep:EPS[r.doc]||{},doc:r.doc,rows:[]};groups.push(by[r.doc]);}by[r.doc].rows.push(r);}
+  const top=groups.slice(0,EPISODES);
+  top.forEach(gp=>{gp.total=gp.rows.length;gp.rows=gp.rows.slice(0,1+MORE_PER_EPISODE);});
+  if(top.length){
+    const hl=await texts(w,top.map(gp=>gp.rows[0].id),qs[1]);
+    top.forEach(gp=>gp.rows[0].text=hl[gp.rows[0].id]||'');
+  }
+  return {groups:top,passages:rows.length,episodes:groups.length,fts:qs[1]};
+}
+
+async function texts(w,ids,fts){
+  const hl=await w.db.query('SELECT rowid AS id, highlight(passages_fts,0,char(1),char(2)) AS t FROM passages_fts WHERE passages_fts MATCH ? AND rowid IN ('+ids.join(',')+')',[fts]);
+  const T={};hl.forEach(x=>T[x.id]=x.t);return T;
 }
 
 async function context(id,doc,el){
@@ -127,38 +184,74 @@ async function context(id,doc,el){
   }catch(e){el.dataset.done='';body.innerHTML='<p class="ctx">Could not load it. Try again.</p>';}
 }
 
+const openLink=(ep,start)=>ep.url?'<a href="'+esc(ep.url+'&t='+start+'s')+'" target="_blank" rel="noopener">Open at '+hms(start)+'</a>':'at '+hms(start);
+
+async function more(gp,fts,el){
+  if(el.dataset.done)return;el.dataset.done='1';
+  const body=el.querySelector('.mx');body.innerHTML='<p class="ctx">Loading...</p>';
+  try{
+    const {w}=await db();const rest=gp.rows.slice(1);
+    const T=await texts(w,rest.map(r=>r.id),fts);
+    body.innerHTML=rest.map(r=>'<p class="meta">'+openLink(gp.ep,r.start)+'</p><p>'+mark(T[r.id]||'')+'</p>').join('');
+  }catch(e){el.dataset.done='';body.innerHTML='<p class="ctx">Could not load it. Try again.</p>';}
+}
+
 function render(res){
   const out=$('out');
-  if(!res.length){out.innerHTML='<p class="empty">Nothing found. Try fewer words or another spelling.</p>';return;}
-  out.innerHTML='<p class="note">'+res.length+' passages shown.</p>'+res.map((r,i)=>
-    '<div class="r"><h2>'+esc(r.title||'')+(r.all?'':'<span class="tag">partial match</span>')+'</h2>'+
-    '<p class="meta">'+esc(r.date||'')+(r.episode?' &middot; #'+esc(r.episode):'')+' &middot; '+
-    (r.url?'<a href="'+esc(r.url+'&t='+r.start+'s')+'" target="_blank" rel="noopener">Open at '+hms(r.start)+'</a>':'at '+hms(r.start))+'</p>'+
-    '<p>'+mark(r.text)+'</p><details data-i="'+i+'"><summary>Show the minute before and after</summary><div class="cx"></div></details></div>').join('');
-  out.querySelectorAll('details').forEach(d=>d.addEventListener('toggle',()=>{if(d.open){const r=res[+d.dataset.i];context(r.id,r.doc,d);}}));
+  if(!res.groups.length){out.innerHTML='<p class="empty">Nothing found. Try fewer words, another spelling, or clear the guest and year boxes.</p>';return;}
+  const shown=res.groups.length;
+  out.innerHTML='<p class="note">'+shown+(res.episodes>shown?' of '+res.episodes:'')+' episode'+(res.episodes===1?'':'s')+', best passage from each.</p>'+res.groups.map((gp,i)=>{
+    const r=gp.rows[0],ep=gp.ep,extra=gp.rows.length-1;
+    return '<div class="r"><h2>'+esc(ep.title||'')+(r.all?'':'<span class="tag">partial match</span>')+'</h2>'+
+    '<p class="meta">'+esc(ep.date||'')+(ep.episode?' &middot; #'+esc(ep.episode):'')+' &middot; '+openLink(ep,r.start)+'</p>'+
+    '<p>'+mark(r.text)+'</p>'+
+    (extra?'<details class="more" data-m="'+i+'"><summary>'+extra+' more passage'+(extra===1?'':'s')+' from this episode'+(gp.total>gp.rows.length?' (of '+(gp.total-1)+')':'')+'</summary><div class="mx"></div></details>':'')+
+    '<details data-i="'+i+'"><summary>Show the minute before and after</summary><div class="cx"></div></details></div>';}).join('')+
+    '<p class="next">Found what you were after? '+NEXT_LINKS.map(l=>'<a href="'+esc(l[1])+'" target="_blank" rel="noopener">'+esc(l[0])+'</a>').join(' &middot; ')+'</p>';
+  out.querySelectorAll('details[data-i]').forEach(d=>d.addEventListener('toggle',()=>{if(d.open){const gp=res.groups[+d.dataset.i];context(gp.rows[0].id,gp.doc,d);}}));
+  out.querySelectorAll('details[data-m]').forEach(d=>d.addEventListener('toggle',()=>{if(d.open)more(res.groups[+d.dataset.m],res.fts,d);}));
+}
+
+function count(q,n){
+  if(!LOG_URL)return;
+  try{navigator.sendBeacon(LOG_URL,new Blob([JSON.stringify({q:q.slice(0,200),n:n})],{type:'text/plain'}));}catch(e){}
 }
 
 async function go(e){
   if(e)e.preventDefault();
   const q=$('q').value.trim(),out=$('out');
   if(!q){out.innerHTML='';return;}
-  const my=++runId;$('b').disabled=true;
-  out.innerHTML='<p class="empty">Searching the archive...</p>';
-  const p=new URLSearchParams({q});if($('o').value!=='best')p.set('o',$('o').value);if($('y1').value)p.set('y1',$('y1').value);if($('y2').value)p.set('y2',$('y2').value);
+  const my=++runId;$('b').disabled=true;$('b').textContent='Searching...';
+  out.innerHTML='<p class="empty">Searching the archive. The first search takes a few seconds while the index loads.</p>';
+  const p=new URLSearchParams({q});if($('o').value!=='best')p.set('o',$('o').value);if($('y1').value)p.set('y1',$('y1').value);if($('y2').value)p.set('y2',$('y2').value);if($('g').value.trim())p.set('g',$('g').value.trim());
   history.replaceState(null,'','?'+p.toString());
   try{
-    const res=await search(q,$('o').value,parseInt($('y1').value)||null,parseInt($('y2').value)||null);
-    if(my===runId)render(res);
+    const res=await search(q,$('o').value,parseInt($('y1').value)||null,parseInt($('y2').value)||null,$('g').value);
+    if(my===runId){render(res);if(e)count(q,res.episodes||0);}
   }catch(err){
     if(my===runId)out.innerHTML='<p class="empty">The search could not load. Check your connection and try again.</p>';
-  }finally{if(my===runId)$('b').disabled=false;}
+  }finally{if(my===runId){$('b').disabled=false;$('b').textContent='Search';}}
+}
+
+function guestList(){
+  const c={};
+  Object.values(EPS).forEach(e=>{
+    const seen=new Set();
+    ((e.title||'').match(/\b[A-Z][a-zA-Z'.-]+(?: (?:[A-Z][a-zA-Z'.-]+|van|von|de|of)){1,2}\b/g)||[]).forEach(n=>{
+      n=n.replace(/[.,-]+$/,'');if(n.length<6||NAME_SKIP.test(n)||seen.has(n))return;seen.add(n);c[n]=(c[n]||0)+1;});
+  });
+  $('gl').innerHTML=Object.keys(c).filter(n=>c[n]>=2).sort((a,b)=>c[b]-c[a]||a.localeCompare(b)).slice(0,200).map(n=>'<option value="'+esc(n)+'">').join('');
 }
 
 $('f').addEventListener('submit',go);
-db().then(({meta})=>{$('stats').textContent=Number(meta.episodes_indexed).toLocaleString()+' episodes, '+Number(meta.passages).toLocaleString()+' passages, '+(meta.words/1e6).toFixed(1)+' million words. Updated '+meta.built+'.';}).catch(()=>{});
+if(LOG_URL)$('logNote').textContent=' Searches are counted to see what people look for; nothing about who searched is kept.';
 const u=new URLSearchParams(location.search);
-if(u.get('o'))$('o').value=u.get('o');if(u.get('y1'))$('y1').value=u.get('y1');if(u.get('y2'))$('y2').value=u.get('y2');
-if(u.get('q')){$('q').value=u.get('q');go();}
+if(u.get('o'))$('o').value=u.get('o');if(u.get('y1'))$('y1').value=u.get('y1');if(u.get('y2'))$('y2').value=u.get('y2');if(u.get('g'))$('g').value=u.get('g');
+db().then(({meta})=>{
+  $('stats').textContent=Number(meta.episodes_indexed).toLocaleString()+' episodes, '+Number(meta.passages).toLocaleString()+' passages, '+(meta.words/1e6).toFixed(1)+' million words. Updated '+meta.built+'.';
+  guestList();
+  if(u.get('q')){$('q').value=u.get('q');go();}
+}).catch(()=>{if(u.get('q')){$('q').value=u.get('q');go();}});
 })();
 </script>
 </body>
