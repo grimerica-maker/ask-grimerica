@@ -150,12 +150,13 @@ async function search(q,order,y1,y2,g){
   const where=conds.length?' AND '+conds.join(' AND '):'';
   const ord={best:'s',oldest:'e.date, p.start',newest:'e.date DESC, p.start'}[order]||'s';
   const sql='SELECT passages_fts.rowid AS id, bm25(passages_fts) AS s, p.doc AS doc, p.start AS start FROM passages_fts JOIN passages p ON p.id=passages_fts.rowid JOIN episodes e ON e.doc=p.doc WHERE passages_fts MATCH ?'+where+' ORDER BY '+ord+' LIMIT '+POOL;
-  const rows=[],seen=new Set();
+  const rows=[],seen=new Set();let failed=0;
   for(const fts of (qs[0]===qs[1]?[qs[0]]:qs)){
-    let got=[];try{got=await w.db.query(sql,[fts].concat(args));}catch(e){continue;}
+    let got=[];try{got=await w.db.query(sql,[fts].concat(args));}catch(e){failed++;continue;}
     for(const r of got){if(!seen.has(r.id)){seen.add(r.id);r.all=(fts===qs[0]);rows.push(r);}}
     if(rows.length>=OR_BELOW)break;            // only widen to "any word" when "all words" found very little
   }
+  if(!rows.length&&failed)throw new Error('database read failed');
   const by={},groups=[];
   for(const r of rows){if(!by[r.doc]){by[r.doc]={ep:EPS[r.doc]||{},doc:r.doc,rows:[]};groups.push(by[r.doc]);}by[r.doc].rows.push(r);}
   const top=groups.slice(0,EPISODES);
@@ -226,7 +227,13 @@ async function go(e){
   const p=new URLSearchParams({q});if($('o').value!=='best')p.set('o',$('o').value);if($('y1').value)p.set('y1',$('y1').value);if($('y2').value)p.set('y2',$('y2').value);if($('g').value.trim())p.set('g',$('g').value.trim());
   history.replaceState(null,'','?'+p.toString());
   try{
-    const res=await search(q,$('o').value,parseInt($('y1').value)||null,parseInt($('y2').value)||null,$('g').value);
+    /* A piece of the database can fail to load the first time it is asked for (right after an update). Start a fresh connection and try again. */
+    let res,bad=null;
+    for(let a=0;a<6;a++){
+      try{res=await search(q,$('o').value,parseInt($('y1').value)||null,parseInt($('y2').value)||null,$('g').value);bad=null;break;}
+      catch(err){bad=err;dbp=null;await new Promise(r=>setTimeout(r,700));if(my!==runId)return;}
+    }
+    if(bad)throw bad;
     if(my===runId){render(res);if(e)count(q,res.episodes||0);}
   }catch(err){
     if(my===runId)out.innerHTML='<p class="empty">The search could not load. Check your connection and try again.</p>';
