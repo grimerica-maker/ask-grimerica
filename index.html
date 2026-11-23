@@ -102,7 +102,7 @@ function db(){
     dbp=(async()=>{
       const c=await (await fetch('config.json',{cache:'no-cache'})).json();
       const cfg=Object.assign({},c.config,{urlPrefix:new URL(c.config.urlPrefix,location.href).href});
-      const w=await createDbWorker([{from:'inline',config:cfg}],new URL('sqlite.worker.js',location.href).href,new URL('sql-wasm.wasm',location.href).href);
+      const w=await createDbWorker([{from:'inline',config:cfg}],new URL('sqlite.worker.js?v=2',location.href).href,new URL('sql-wasm.wasm',location.href).href);
       const eps=await w.db.query('SELECT doc,title,date,episode,url FROM episodes');
       eps.forEach(e=>EPS[e.doc]=e);
       w.db.query("SELECT rowid FROM passages_fts WHERE passages_fts MATCH '\"grimerica\"' LIMIT 1").catch(()=>{});
