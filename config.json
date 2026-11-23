@@ -1,0 +1,1 @@
+{"config": {"serverMode": "chunked", "requestChunkSize": 16384, "databaseLengthBytes": 105431040, "serverChunkSize": 3538944, "urlPrefix": "ask.db.", "suffixLength": 3, "cacheBust": "20261122"}, "meta": {"transcripts": 1221, "episodes_indexed": 1024, "passages": 75054, "words": 13195496, "built": "2026-11-22"}}
